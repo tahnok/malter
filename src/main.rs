@@ -20,13 +20,77 @@ use epd_waveshare::{
 
 use embedded_text::{alignment::center::CenterAligned, prelude::*};
 
+use ureq;
+
+use std::{error, fmt, result};
+
 struct IndoorData {
     temp: f32,
     hummidity: f32,
     pressure: f32,
 }
 
-fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<(), std::io::Error> {
+#[derive(Debug)]
+struct Oops(String);
+
+impl From<std::io::Error> for Oops {
+    fn from(e: std::io::Error) -> Oops {
+        Oops(e.to_string())
+    }
+}
+
+impl From<ureq::Error> for Oops {
+    fn from(e: ureq::Error) -> Oops {
+        Oops(e.to_string())
+    }
+}
+
+impl error::Error for Oops {}
+
+impl fmt::Display for Oops {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+use serde_json::Value;
+
+type Result<T> = result::Result<T, Oops>;
+
+fn main() -> Result<()> {
+    let (mut epd, mut spi) = get_epd()?;
+
+    // Use display graphics from embedded-graphics
+    let mut display = Display2in9::default();
+    display.set_rotation(DisplayRotation::Rotate90);
+
+    let response: serde_json::Value = ureq::get("http://192.168.2.8:8086/query")
+        .query("pretty", "true")
+        .query("db", "hummingbird")
+        .query("q", "SELECT MEAN(temperature) as temperature, MEAN(pressure) as pressure, MEAN(humidity) as humidity FROM \"indoor\" group by time(15m) order by time desc limit 1")
+        .call()?
+        .into_json()?;
+
+    println!("{}", json["results"][0]["series"]["name"]);
+
+    let data = IndoorData {
+        temp: 21.4,
+        hummidity: 49.2,
+        pressure: 1026.1,
+    };
+
+    draw(&mut display, &data)?;
+
+    // Display updated frame
+    epd.update_and_display_frame(&mut spi, &display.buffer())?;
+
+    // Set the EPD to sleep
+    epd.sleep(&mut spi)?;
+
+    Ok(())
+}
+
+fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<()> {
     let big_text_style = TextBoxStyleBuilder::new(Font12x16)
         .text_color(Black)
         .alignment(CenterAligned)
@@ -70,7 +134,10 @@ fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<(), std::
         .draw(display)
         .expect("impossible");
 
-    let minor_text = format!("{:.1}%\n{:.0} hPa", indoor_data.hummidity, indoor_data.pressure);
+    let minor_text = format!(
+        "{:.1}%\n{:.0} hPa",
+        indoor_data.hummidity, indoor_data.pressure
+    );
     let text_box2 = TextBox::new(&minor_text, left_bottom).into_styled(small_text_style);
     text_box2.draw(display).expect("impossible");
 
@@ -82,32 +149,7 @@ fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<(), std::
     Ok(())
 }
 
-fn main() -> Result<(), std::io::Error> {
-    let (mut epd, mut spi) = get_epd()?;
-
-    // Use display graphics from embedded-graphics
-    let mut display = Display2in9::default();
-    display.set_rotation(DisplayRotation::Rotate90);
-
-    let data = IndoorData {
-        temp: 21.4,
-        hummidity: 49.2,
-        pressure: 1026.1,
-    };
-
-    draw(&mut display, &data)?;
-
-    // Display updated frame
-    epd.update_and_display_frame(&mut spi, &display.buffer())?;
-
-    // Set the EPD to sleep
-    epd.sleep(&mut spi)?;
-
-    Ok(())
-}
-
-
-fn get_epd() -> Result<(EPD2in9<Spidev, Pin, Pin, Pin, Pin>, Spidev), std::io::Error> {
+fn get_epd() -> Result<(EPD2in9<Spidev, Pin, Pin, Pin, Pin>, Spidev)> {
     // Configure SPI
     // Settings are taken from
     let mut spi = Spidev::open("/dev/spidev0.0").expect("spidev directory");
