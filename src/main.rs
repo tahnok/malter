@@ -25,9 +25,16 @@ use ureq;
 use std::{error, fmt, result};
 
 struct IndoorData {
-    temp: f32,
-    hummidity: f32,
-    pressure: f32,
+    temp: f64,
+    humidity: f64,
+    pressure: f64,
+}
+
+#[derive(Debug)]
+struct OutdoorData {
+    temp: f64,
+    humidity: f64,
+    pressure: f64,
 }
 
 #[derive(Debug)]
@@ -53,8 +60,6 @@ impl fmt::Display for Oops {
     }
 }
 
-use serde_json::Value;
-
 type Result<T> = result::Result<T, Oops>;
 
 fn main() -> Result<()> {
@@ -64,22 +69,10 @@ fn main() -> Result<()> {
     let mut display = Display2in9::default();
     display.set_rotation(DisplayRotation::Rotate90);
 
-    let response: serde_json::Value = ureq::get("http://192.168.2.8:8086/query")
-        .query("pretty", "true")
-        .query("db", "hummingbird")
-        .query("q", "SELECT MEAN(temperature) as temperature, MEAN(pressure) as pressure, MEAN(humidity) as humidity FROM \"indoor\" group by time(15m) order by time desc limit 1")
-        .call()?
-        .into_json()?;
+    let (indoor_data, outdoor_data) = get_data()?;
 
-    println!("{}", response["results"][0]["series"]["name"]);
 
-    let data = IndoorData {
-        temp: 21.4,
-        hummidity: 49.2,
-        pressure: 1026.1,
-    };
-
-    draw(&mut display, &data)?;
+    draw(&mut display, &indoor_data, &outdoor_data)?;
 
     // Display updated frame
     epd.update_and_display_frame(&mut spi, &display.buffer())?;
@@ -90,7 +83,40 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<()> {
+fn get_data() -> Result<(IndoorData, OutdoorData)> {
+    let response: serde_json::Value = ureq::get("http://192.168.2.8:8086/query")
+        .query("pretty", "true")
+        .query("db", "hummingbird")
+        .query("q", "SELECT MEAN(temperature) as temperature, MEAN(pressure) as pressure, MEAN(humidity) as humidity FROM \"indoor\" group by time(15m) order by time desc limit 1")
+        .call()?
+        .into_json()?;
+
+    let values = &response["results"][0]["series"][0]["values"][0];
+
+    let indoor_data = IndoorData {
+        temp: values[1].as_f64().unwrap_or(0.0),
+        humidity: values[3].as_f64().unwrap_or(0.0),
+        pressure: values[2].as_f64().unwrap_or(0.0),
+    };
+
+    let response: serde_json::Value = ureq::get("https://api.openweathermap.org/data/2.5/onecall")
+        .query("lat", "45.3225")
+        .query("lon", "-75.667222")
+        .query("appid", "f0cd2f27a2c190845cfb5c281d0d0858")
+        .query("units", "metric")
+        .call()?
+        .into_json()?;
+
+    let outdoor_data = OutdoorData {
+        temp: response["current"]["feels_like"].as_f64().unwrap_or(0.0),
+        humidity: response["current"]["humidity"].as_f64().unwrap_or(0.0),
+        pressure: response["current"]["pressure"].as_f64().unwrap_or(0.0),
+    };
+
+    return Ok((indoor_data, outdoor_data));
+}
+
+fn draw(display: &mut Display2in9, indoor_data: &IndoorData, outdoor_data: &OutdoorData) -> Result<()> {
     let big_text_style = TextBoxStyleBuilder::new(Font12x16)
         .text_color(Black)
         .alignment(CenterAligned)
@@ -108,6 +134,7 @@ fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<()> {
         .stroke_width(1)
         .build();
 
+    // left column indoor data
     let left_top = Rectangle::new(
         Point::new(0, 0),
         Point::new(HEIGHT as i32 / 3, WIDTH as i32 / 2),
@@ -116,15 +143,6 @@ fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<()> {
         Point::new(0, WIDTH as i32 / 2),
         Point::new(HEIGHT as i32 / 3, WIDTH as i32),
     );
-    let _middle = Rectangle::new(
-        Point::new(HEIGHT as i32 / 3, 0),
-        Point::new((HEIGHT as i32 / 3) * 2, WIDTH as i32),
-    );
-    let _right = Rectangle::new(
-        Point::new((HEIGHT as i32 / 3) * 2, 0),
-        Point::new(HEIGHT as i32, WIDTH as i32),
-    );
-
     let temp_txt = format!("{:.1}C", indoor_data.temp);
     let text_box1 = TextBox::new(&temp_txt, left_top).into_styled(big_text_style);
     text_box1.draw(display).expect("impossible");
@@ -136,7 +154,7 @@ fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<()> {
 
     let minor_text = format!(
         "{:.1}%\n{:.0} hPa",
-        indoor_data.hummidity, indoor_data.pressure
+        indoor_data.humidity, indoor_data.pressure
     );
     let text_box2 = TextBox::new(&minor_text, left_bottom).into_styled(small_text_style);
     text_box2.draw(display).expect("impossible");
@@ -145,6 +163,43 @@ fn draw(display: &mut Display2in9, indoor_data: &IndoorData) -> Result<()> {
         .into_styled(line_style)
         .draw(display)
         .expect("impossible");
+
+    // middle outdoor temp
+    let middle_top = Rectangle::new(
+        Point::new(HEIGHT as i32 / 3, 0),
+        Point::new((HEIGHT as i32 / 3) * 2, WIDTH as i32 / 2),
+    );
+    let middle_bottom = Rectangle::new(
+        Point::new(HEIGHT as i32 / 3, WIDTH as i32 / 2),
+        Point::new((HEIGHT as i32 / 3) * 2, WIDTH as i32),
+    );
+
+    let temp_txt = format!("{:.1}C", outdoor_data.temp);
+    let text_box1 = TextBox::new(&temp_txt, middle_top).into_styled(big_text_style);
+    text_box1.draw(display).expect("impossible");
+
+    middle_top
+        .into_styled(line_style)
+        .draw(display)
+        .expect("impossible");
+
+    let minor_text = format!(
+        "{:.1}%\n{:.0} hPa",
+        outdoor_data.humidity, outdoor_data.pressure
+    );
+    let text_box2 = TextBox::new(&minor_text, middle_bottom).into_styled(small_text_style);
+    text_box2.draw(display).expect("impossible");
+
+    middle_bottom
+        .into_styled(line_style)
+        .draw(display)
+        .expect("impossible");
+
+    // right outdoor forecast
+    let _right = Rectangle::new(
+        Point::new((HEIGHT as i32 / 3) * 2, 0),
+        Point::new(HEIGHT as i32, WIDTH as i32),
+    );
 
     Ok(())
 }
