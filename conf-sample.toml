@@ -1,0 +1,5 @@
+influx_server = "http://localhost:8086/query"
+influx_database = "default"
+lat = "45.0"
+lon = "-75.0"
+openweather_api_key = "https://openweathermap.org/"

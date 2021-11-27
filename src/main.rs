@@ -22,7 +22,18 @@ use embedded_text::{alignment::center::CenterAligned, prelude::*};
 
 use ureq;
 
-use std::{error, fmt, result};
+use std::{error, fmt, fs, result};
+
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Config {
+    influx_server: String,
+    influx_database: String,
+    lat: String,
+    lon: String,
+    openweather_api_key: String,
+}
 
 struct IndoorData {
     temp: f64,
@@ -52,6 +63,12 @@ impl From<ureq::Error> for Oops {
     }
 }
 
+impl From<toml::de::Error> for Oops {
+    fn from(e: toml::de::Error) -> Oops {
+        Oops(e.to_string())
+    }
+}
+
 impl error::Error for Oops {}
 
 impl fmt::Display for Oops {
@@ -63,14 +80,17 @@ impl fmt::Display for Oops {
 type Result<T> = result::Result<T, Oops>;
 
 fn main() -> Result<()> {
+    let conf_file =
+        fs::read_to_string("conf.toml").expect("Missing conf.toml, try copying conf-sample.toml");
+    let config: Config = toml::from_str(&conf_file)?;
+
     let (mut epd, mut spi) = get_epd()?;
 
     // Use display graphics from embedded-graphics
     let mut display = Display2in9::default();
     display.set_rotation(DisplayRotation::Rotate90);
 
-    let (indoor_data, outdoor_data) = get_data()?;
-
+    let (indoor_data, outdoor_data) = get_data(&config)?;
 
     draw(&mut display, &indoor_data, &outdoor_data)?;
 
@@ -83,10 +103,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn get_data() -> Result<(IndoorData, OutdoorData)> {
-    let response: serde_json::Value = ureq::get("http://192.168.2.8:8086/query")
+fn get_data(config: &Config) -> Result<(IndoorData, OutdoorData)> {
+    let response: serde_json::Value = ureq::get(&config.influx_server)
         .query("pretty", "true")
-        .query("db", "hummingbird")
+        .query("db", &config.influx_database)
         .query("q", "SELECT MEAN(temperature) as temperature, MEAN(pressure) as pressure, MEAN(humidity) as humidity FROM \"indoor\" group by time(15m) order by time desc limit 1")
         .call()?
         .into_json()?;
@@ -100,9 +120,9 @@ fn get_data() -> Result<(IndoorData, OutdoorData)> {
     };
 
     let response: serde_json::Value = ureq::get("https://api.openweathermap.org/data/2.5/onecall")
-        .query("lat", "45.3225")
-        .query("lon", "-75.667222")
-        .query("appid", "f0cd2f27a2c190845cfb5c281d0d0858")
+        .query("lat", &config.lat)
+        .query("lon", &config.lon)
+        .query("appid", &config.openweather_api_key)
         .query("units", "metric")
         .call()?
         .into_json()?;
@@ -116,7 +136,11 @@ fn get_data() -> Result<(IndoorData, OutdoorData)> {
     return Ok((indoor_data, outdoor_data));
 }
 
-fn draw(display: &mut Display2in9, indoor_data: &IndoorData, outdoor_data: &OutdoorData) -> Result<()> {
+fn draw(
+    display: &mut Display2in9,
+    indoor_data: &IndoorData,
+    outdoor_data: &OutdoorData,
+) -> Result<()> {
     let big_text_style = TextBoxStyleBuilder::new(Font12x16)
         .text_color(Black)
         .alignment(CenterAligned)
