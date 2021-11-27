@@ -283,6 +283,7 @@ dependencies = [
  "embedded-text",
  "epd-waveshare",
  "linux-embedded-hal",
+ "serde_json",
  "ureq",
 ]
 

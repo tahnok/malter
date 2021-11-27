@@ -71,7 +71,7 @@ fn main() -> Result<()> {
         .call()?
         .into_json()?;
 
-    println!("{}", json["results"][0]["series"]["name"]);
+    println!("{}", response["results"][0]["series"]["name"]);
 
     let data = IndoorData {
         temp: 21.4,
