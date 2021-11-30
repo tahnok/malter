@@ -48,6 +48,13 @@ struct OutdoorData {
     pressure: f64,
 }
 
+struct ForecastData {
+    high: f64,
+    low: f64,
+    description: String,
+    pop: f64,
+}
+
 #[derive(Debug)]
 struct Oops(String);
 
@@ -90,9 +97,9 @@ fn main() -> Result<()> {
     let mut display = Display2in9::default();
     display.set_rotation(DisplayRotation::Rotate90);
 
-    let (indoor_data, outdoor_data) = get_data(&config)?;
+    let (indoor_data, outdoor_data, forecast_data) = get_data(&config)?;
 
-    draw(&mut display, &indoor_data, &outdoor_data)?;
+    draw(&mut display, &indoor_data, &outdoor_data, &forecast_data)?;
 
     // Display updated frame
     epd.update_and_display_frame(&mut spi, &display.buffer())?;
@@ -103,7 +110,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn get_data(config: &Config) -> Result<(IndoorData, OutdoorData)> {
+fn get_data(config: &Config) -> Result<(IndoorData, OutdoorData, ForecastData)> {
     let response: serde_json::Value = ureq::get(&config.influx_server)
         .query("pretty", "true")
         .query("db", &config.influx_database)
@@ -133,13 +140,22 @@ fn get_data(config: &Config) -> Result<(IndoorData, OutdoorData)> {
         pressure: response["current"]["pressure"].as_f64().unwrap_or(0.0),
     };
 
-    return Ok((indoor_data, outdoor_data));
+    let forecast_data = ForecastData {
+        high: response["daily"][0]["temp"]["max"].as_f64().unwrap_or(0.0),
+        low: response["daily"][0]["temp"]["min"].as_f64().unwrap_or(0.0),
+        description: response["daily"][0]["weather"][0]["description"].to_string(),
+        pop: response["daily"][0]["pop"].as_f64().unwrap_or(0.0),
+    };
+
+
+    return Ok((indoor_data, outdoor_data, forecast_data));
 }
 
 fn draw(
     display: &mut Display2in9,
     indoor_data: &IndoorData,
     outdoor_data: &OutdoorData,
+    forecast_data: &ForecastData,
 ) -> Result<()> {
     let big_text_style = TextBoxStyleBuilder::new(Font12x16)
         .text_color(Black)
@@ -220,10 +236,27 @@ fn draw(
         .expect("impossible");
 
     // right outdoor forecast
-    let _right = Rectangle::new(
+    let right = Rectangle::new(
         Point::new((HEIGHT as i32 / 3) * 2, 0),
         Point::new(HEIGHT as i32, WIDTH as i32),
     );
+
+    let forecast_text = format!(
+        "High: {:.1}\n  Low: {:.1}\n  Pop: {:.1}%\n\n{}",
+        forecast_data.high,
+        forecast_data.low,
+        forecast_data.pop,
+        forecast_data.description,
+    );
+
+    let text_box3 = TextBox::new(&forecast_text, right).into_styled(small_text_style);
+    text_box3.draw(display).expect("impossible");
+
+    right
+        .into_styled(line_style)
+        .draw(display)
+        .expect("impossible");
+
 
     Ok(())
 }
