@@ -26,6 +26,8 @@ use std::{error, fmt, fs, result};
 
 use serde::Deserialize;
 
+use chrono::prelude::*;
+
 #[derive(Deserialize)]
 struct Config {
     influx_server: String,
@@ -87,6 +89,14 @@ impl fmt::Display for Oops {
 type Result<T> = result::Result<T, Oops>;
 
 fn main() -> Result<()> {
+    let local: DateTime<Local> = Local::now();
+    let hour = local.hour();
+
+    if hour > 22 || hour < 7 {
+        println!("bed time, sleeping...");
+        return Ok(());
+    }
+
     let conf_file =
         fs::read_to_string("conf.toml").expect("Missing conf.toml, try copying conf-sample.toml");
     let config: Config = toml::from_str(&conf_file)?;
